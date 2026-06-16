@@ -1,0 +1,772 @@
+import { useState, useEffect, useRef } from "react";
+
+// ── MOCK DATA ──────────────────────────────────────────────────────────────
+const ALUNOS_MOCK = [
+  { id: 1, nome: "Ana Beatriz Silva", turma: "6ºA", foto: "AB", status: "presente", hora: "08:02", risco: false },
+  { id: 2, nome: "Carlos Eduardo Lima", turma: "6ºA", foto: "CE", status: "presente", hora: "08:05", risco: false },
+  { id: 3, nome: "Mariana Costa", turma: "6ºB", foto: "MC", status: "ausente", hora: null, risco: true },
+  { id: 4, nome: "Pedro Henrique Rocha", turma: "6ºB", foto: "PH", status: "presente", hora: "08:03", risco: false },
+  { id: 5, nome: "Juliana Ferreira", turma: "7ºA", foto: "JF", status: "presente", hora: "08:07", risco: false },
+  { id: 6, nome: "Lucas Mendes", turma: "7ºA", foto: "LM", status: "em_transito", hora: "08:10", risco: false },
+  { id: 7, nome: "Sofia Alves", turma: "7ºB", foto: "SA", status: "presente", hora: "08:01", risco: false },
+  { id: 8, nome: "Rafael Souza", turma: "7ºB", foto: "RS", status: "ausente", hora: null, risco: true },
+  { id: 9, nome: "Camila Oliveira", turma: "6ºA", foto: "CO", status: "presente", hora: "08:06", risco: false },
+  { id: 10, nome: "Bruno Nascimento", turma: "6ºB", foto: "BN", status: "em_transito", hora: "08:11", risco: false },
+  { id: 11, nome: "Isabela Santos", turma: "7ºA", foto: "IS", status: "presente", hora: "08:04", risco: false },
+  { id: 12, nome: "Thiago Barbosa", turma: "7ºB", foto: "TB", status: "presente", hora: "08:08", risco: false },
+];
+
+const PARADAS_MOCK = [
+  { id: 1, nome: "Escola Municipal Dom Pedro", tipo: "origem", lat: -23.5505, lng: -46.6333, hora: "07:45", concluida: true },
+  { id: 2, nome: "Av. Paulista - Ponto 1", tipo: "parada", lat: -23.5618, lng: -46.6565, hora: "08:15", concluida: true },
+  { id: 3, nome: "Parque do Ibirapuera", tipo: "destino", lat: -23.5874, lng: -46.6576, hora: "08:45", concluida: false },
+  { id: 4, nome: "Museu de Ciências", tipo: "visita", lat: -23.5960, lng: -46.6890, hora: "10:00", concluida: false },
+  { id: 5, nome: "Retorno - Escola", tipo: "retorno", lat: -23.5505, lng: -46.6333, hora: "16:00", concluida: false },
+];
+
+const NOTIFICACOES_MOCK = [
+  { id: 1, tipo: "alerta", msg: "Mariana Costa não embarcou no ônibus", hora: "08:20", lida: false },
+  { id: 2, tipo: "alerta", msg: "Rafael Souza não embarcou no ônibus", hora: "08:20", lida: false },
+  { id: 3, tipo: "info", msg: "Ônibus 1 partiu da escola às 07:45", hora: "07:45", lida: true },
+  { id: 4, tipo: "sucesso", msg: "Checkpoint 1 (Av. Paulista) concluído — 10 alunos confirmados", hora: "08:18", lida: true },
+  { id: 5, tipo: "info", msg: "Previsão de chegada ao Ibirapuera: 08:45", hora: "08:25", lida: true },
+  { id: 6, tipo: "aviso", msg: "Trânsito moderado na Av. Brigadeiro Faria Lima", hora: "08:30", lida: false },
+];
+
+// ── HELPERS ───────────────────────────────────────────────────────────────
+const STATUS_CONF = {
+  presente:   { label: "Presente",    cor: "#22c55e", bg: "#dcfce7", icon: "✓" },
+  ausente:    { label: "Ausente",     cor: "#ef4444", bg: "#fee2e2", icon: "✗" },
+  em_transito:{ label: "Em trânsito", cor: "#f59e0b", bg: "#fef3c7", icon: "⟳" },
+};
+
+function Avatar({ iniciais, size = 48, cor }) {
+  const cores = ["#1B3D6F","#2563eb","#7c3aed","#0891b2","#059669","#d97706"];
+  const c = cor || cores[iniciais.charCodeAt(0) % cores.length];
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: "50%",
+      background: c, color: "#fff",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontWeight: 700, fontSize: size * 0.33, flexShrink: 0,
+      boxShadow: "0 2px 8px rgba(0,0,0,0.15)"
+    }}>{iniciais}</div>
+  );
+}
+
+function Badge({ status }) {
+  const s = STATUS_CONF[status] || STATUS_CONF.ausente;
+  return (
+    <span style={{
+      background: s.bg, color: s.cor,
+      borderRadius: 20, padding: "3px 10px",
+      fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
+      display: "inline-flex", alignItems: "center", gap: 4
+    }}>{s.icon} {s.label}</span>
+  );
+}
+
+// ── FACIAL RECOGNITION MODAL ──────────────────────────────────────────────
+function FacialModal({ onClose, onConfirm }) {
+  const [fase, setFase] = useState("capturando"); // capturando → analisando → confirmado
+  const [progresso, setProgresso] = useState(0);
+  const [alunoDetectado, setAlunoDetectado] = useState(null);
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setFase("analisando"), 1800);
+    const t2 = setTimeout(() => {
+      const random = ALUNOS_MOCK[Math.floor(Math.random() * ALUNOS_MOCK.length)];
+      setAlunoDetectado(random);
+      setFase("confirmado");
+    }, 3600);
+    const interval = setInterval(() => setProgresso(p => Math.min(p + 3, 100)), 60);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearInterval(interval); };
+  }, []);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)",
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", zIndex: 1000, padding: 24
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 20, padding: 32,
+        width: "100%", maxWidth: 360, textAlign: "center"
+      }}>
+        <p style={{ margin: "0 0 8px", fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: 1.5, textTransform: "uppercase" }}>
+          Reconhecimento Facial
+        </p>
+
+        {/* Câmera simulada */}
+        <div style={{
+          width: 220, height: 220, margin: "0 auto 20px",
+          background: "#0f172a", borderRadius: 16,
+          position: "relative", overflow: "hidden",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          border: fase === "confirmado" ? "3px solid #22c55e" : "3px solid #1B3D6F"
+        }}>
+          {/* Scanner lines animation */}
+          {fase === "capturando" && (
+            <div style={{
+              position: "absolute", top: 0, left: 0, right: 0,
+              height: 2, background: "#22c55e", opacity: 0.8,
+              animation: "scan 1.5s linear infinite",
+              boxShadow: "0 0 12px #22c55e"
+            }}/>
+          )}
+          {/* Face outline */}
+          <div style={{
+            width: 110, height: 130, borderRadius: "50% 50% 45% 45%",
+            border: fase === "confirmado" ? "2px solid #22c55e" : "2px solid rgba(255,255,255,0.3)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            position: "relative"
+          }}>
+            {fase === "confirmado" && alunoDetectado ? (
+              <Avatar iniciais={alunoDetectado.foto} size={80} />
+            ) : (
+              <div style={{ color: "rgba(255,255,255,0.15)", fontSize: 64 }}>👤</div>
+            )}
+          </div>
+          {/* Corner brackets */}
+          {["topleft","topright","botleft","botright"].map(pos => (
+            <div key={pos} style={{
+              position: "absolute",
+              top: pos.includes("top") ? 12 : "auto",
+              bottom: pos.includes("bot") ? 12 : "auto",
+              left: pos.includes("left") ? 12 : "auto",
+              right: pos.includes("right") ? 12 : "auto",
+              width: 20, height: 20,
+              borderTop: pos.includes("top") ? "3px solid #22c55e" : "none",
+              borderBottom: pos.includes("bot") ? "3px solid #22c55e" : "none",
+              borderLeft: pos.includes("left") ? "3px solid #22c55e" : "none",
+              borderRight: pos.includes("right") ? "3px solid #22c55e" : "none",
+            }}/>
+          ))}
+        </div>
+
+        {/* Progress */}
+        {fase !== "confirmado" && (
+          <div style={{ background: "#e2e8f0", borderRadius: 99, height: 6, margin: "0 0 16px" }}>
+            <div style={{ background: "#1B3D6F", borderRadius: 99, height: "100%", width: `${progresso}%`, transition: "width 0.1s" }}/>
+          </div>
+        )}
+
+        <p style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, color: "#1B3D6F" }}>
+          {fase === "capturando" && "Posicione o rosto na câmera"}
+          {fase === "analisando" && "Analisando biometria…"}
+          {fase === "confirmado" && `✓ ${alunoDetectado?.nome}`}
+        </p>
+        <p style={{ margin: "0 0 24px", fontSize: 13, color: "#64748b" }}>
+          {fase === "capturando" && "Mantenha o rosto centralizado"}
+          {fase === "analisando" && "Comparando com banco de dados"}
+          {fase === "confirmado" && `Turma ${alunoDetectado?.turma} · Presença registrada`}
+        </p>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} style={{
+            flex: 1, padding: "12px", border: "1.5px solid #e2e8f0",
+            borderRadius: 10, background: "#fff", color: "#64748b",
+            fontWeight: 600, fontSize: 14, cursor: "pointer"
+          }}>Cancelar</button>
+          {fase === "confirmado" && (
+            <button onClick={() => { onConfirm(alunoDetectado); onClose(); }} style={{
+              flex: 1, padding: "12px", border: "none",
+              borderRadius: 10, background: "#22c55e", color: "#fff",
+              fontWeight: 700, fontSize: 14, cursor: "pointer"
+            }}>Confirmar</button>
+          )}
+        </div>
+      </div>
+      <style>{`@keyframes scan { 0%{top:0} 100%{top:100%} }`}</style>
+    </div>
+  );
+}
+
+// ── MAPA SIMULADO ─────────────────────────────────────────────────────────
+function MapaView({ alunos }) {
+  const canvasRef = useRef(null);
+  const [busPos, setBusPos] = useState(0.35); // 0-1 progress on route
+
+  useEffect(() => {
+    const interval = setInterval(() => setBusPos(p => (p + 0.002) % 1), 100);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+
+    // Background
+    ctx.fillStyle = "#e8f4ea";
+    ctx.fillRect(0, 0, W, H);
+
+    // Grid (streets)
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 8;
+    for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+    // Blocks
+    ctx.fillStyle = "#d4e8c2";
+    for (let x = 4; x < W; x += 40)
+      for (let y = 4; y < H; y += 40)
+        ctx.fillRect(x, y, 32, 32);
+
+    // Route
+    const route = [[50,250],[80,200],[130,160],[200,140],[270,130],[340,150],[390,200],[400,270]];
+    ctx.beginPath();
+    ctx.moveTo(...route[0]);
+    route.forEach(([x,y]) => ctx.lineTo(x, y));
+    ctx.strokeStyle = "#1B3D6F";
+    ctx.lineWidth = 4;
+    ctx.setLineDash([8,4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Completed part
+    const idx = Math.floor(busPos * (route.length - 1));
+    ctx.beginPath();
+    ctx.moveTo(...route[0]);
+    route.slice(0, idx + 1).forEach(([x,y]) => ctx.lineTo(x, y));
+    ctx.strokeStyle = "#22c55e";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    // Stops
+    const stopColors = ["#22c55e","#22c55e","#1B3D6F","#f59e0b","#94a3b8"];
+    route.forEach(([x, y], i) => {
+      if (i % 2 !== 0 && i !== route.length - 1) return;
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = stopColors[Math.floor(i / 2)] || "#94a3b8";
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
+
+    // Bus (animated)
+    const t = busPos * (route.length - 1);
+    const i0 = Math.floor(t), i1 = Math.min(i0 + 1, route.length - 1);
+    const frac = t - i0;
+    const bx = route[i0][0] + (route[i1][0] - route[i0][0]) * frac;
+    const by = route[i0][1] + (route[i1][1] - route[i0][1]) * frac;
+
+    ctx.fillStyle = "#F4C430";
+    ctx.strokeStyle = "#1B3D6F";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(bx - 14, by - 10, 28, 20, 4);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#1B3D6F";
+    ctx.font = "bold 13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("🚌", bx, by + 5);
+
+    // Label
+    ctx.fillStyle = "#1B3D6F";
+    ctx.font = "bold 10px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Escola", 50, 268);
+    ctx.fillText("Ibirapuera", 340, 168);
+    ctx.fillText("Museu", 400, 288);
+  }, [busPos]);
+
+  return (
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+      {/* Map */}
+      <div style={{ background: "#fff", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 12px rgba(0,0,0,0.08)" }}>
+        <div style={{ padding: "14px 16px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#1B3D6F" }}>🗺 Trajeto em Tempo Real</p>
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Ônibus 1 · 10 alunos a bordo</p>
+          </div>
+          <span style={{ background: "#dcfce7", color: "#16a34a", borderRadius: 99, padding: "4px 10px", fontSize: 11, fontWeight: 700 }}>
+            🟢 AO VIVO
+          </span>
+        </div>
+        <canvas ref={canvasRef} width={460} height={310}
+          style={{ width: "100%", height: "auto", display: "block" }}/>
+      </div>
+
+      {/* Paradas */}
+      <div style={{ background: "#fff", borderRadius: 16, padding: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.08)" }}>
+        <p style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: "#1B3D6F" }}>Paradas do Percurso</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {PARADAS_MOCK.map((parada, idx) => (
+            <div key={parada.id} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: "50%",
+                  background: parada.concluida ? "#22c55e" : idx === 2 ? "#1B3D6F" : "#e2e8f0",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: parada.concluida || idx === 2 ? "#fff" : "#94a3b8",
+                  fontSize: 12, fontWeight: 700, flexShrink: 0
+                }}>
+                  {parada.concluida ? "✓" : idx === 2 ? "●" : idx + 1}
+                </div>
+                {idx < PARADAS_MOCK.length - 1 && (
+                  <div style={{ width: 2, height: 28, background: parada.concluida ? "#22c55e" : "#e2e8f0", margin: "2px 0" }}/>
+                )}
+              </div>
+              <div style={{ paddingBottom: 8 }}>
+                <p style={{ margin: "4px 0 1px", fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{parada.nome}</p>
+                <p style={{ margin: 0, fontSize: 11, color: "#94a3b8" }}>
+                  {parada.tipo.toUpperCase()} · {parada.hora}
+                  {parada.concluida ? " ✓ Concluído" : idx === 2 ? " · Em rota" : ""}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {[
+          { icon: "🚌", label: "Velocidade", val: "42 km/h" },
+          { icon: "📍", label: "Distância", val: "5.2 km" },
+          { icon: "⏱", label: "Chegada ETA", val: "~8 min" },
+          { icon: "👥", label: "A bordo", val: "10 alunos" },
+        ].map(s => (
+          <div key={s.label} style={{
+            background: "#fff", borderRadius: 14, padding: "14px 16px",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.06)"
+          }}>
+            <p style={{ margin: "0 0 2px", fontSize: 20 }}>{s.icon}</p>
+            <p style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#1B3D6F" }}>{s.val}</p>
+            <p style={{ margin: 0, fontSize: 11, color: "#94a3b8" }}>{s.label}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── ALUNOS VIEW ────────────────────────────────────────────────────────────
+function AlunosView({ alunos, setAlunos }) {
+  const [showFacial, setShowFacial] = useState(false);
+  const [filtro, setFiltro] = useState("todos");
+  const [busca, setBusca] = useState("");
+  const [toast, setToast] = useState(null);
+
+  const filtrados = alunos.filter(a => {
+    const matchFiltro = filtro === "todos" || a.status === filtro;
+    const matchBusca = a.nome.toLowerCase().includes(busca.toLowerCase()) || a.turma.includes(busca);
+    return matchFiltro && matchBusca;
+  });
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const toggleStatus = (id) => {
+    setAlunos(prev => prev.map(a => {
+      if (a.id !== id) return a;
+      const novo = a.status === "presente" ? "ausente" : "presente";
+      return { ...a, status: novo, hora: novo === "presente" ? new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : null };
+    }));
+    showToast("Presença atualizada");
+  };
+
+  const onFacialConfirm = (aluno) => {
+    setAlunos(prev => prev.map(a =>
+      a.id === aluno.id
+        ? { ...a, status: "presente", hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }
+        : a
+    ));
+    showToast(`✓ ${aluno.nome} registrado via reconhecimento facial`);
+  };
+
+  const presentes = alunos.filter(a => a.status === "presente").length;
+  const ausentes = alunos.filter(a => a.status === "ausente").length;
+
+  return (
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+      {toast && (
+        <div style={{
+          position: "fixed", top: 80, left: "50%", transform: "translateX(-50%)",
+          background: "#1B3D6F", color: "#fff", padding: "10px 20px",
+          borderRadius: 99, fontSize: 13, fontWeight: 600, zIndex: 999,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.2)"
+        }}>{toast}</div>
+      )}
+
+      {/* Summary cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+        {[
+          { val: alunos.length, label: "Total", cor: "#1B3D6F", bg: "#eff6ff" },
+          { val: presentes, label: "Presentes", cor: "#16a34a", bg: "#dcfce7" },
+          { val: ausentes, label: "Ausentes", cor: "#dc2626", bg: "#fee2e2" },
+        ].map(c => (
+          <div key={c.label} style={{ background: c.bg, borderRadius: 12, padding: "12px 8px", textAlign: "center" }}>
+            <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: c.cor }}>{c.val}</p>
+            <p style={{ margin: 0, fontSize: 11, color: c.cor, fontWeight: 600 }}>{c.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Facial btn */}
+      <button onClick={() => setShowFacial(true)} style={{
+        background: "linear-gradient(135deg, #1B3D6F, #2563eb)",
+        color: "#fff", border: "none", borderRadius: 14,
+        padding: "14px 20px", fontWeight: 700, fontSize: 15,
+        cursor: "pointer", display: "flex", alignItems: "center",
+        justifyContent: "center", gap: 8, boxShadow: "0 4px 14px rgba(27,61,111,0.35)"
+      }}>
+        👤 Reconhecimento Facial
+      </button>
+
+      {/* Search & filter */}
+      <div>
+        <input
+          placeholder="Buscar aluno ou turma..."
+          value={busca}
+          onChange={e => setBusca(e.target.value)}
+          style={{
+            width: "100%", boxSizing: "border-box",
+            padding: "10px 14px", borderRadius: 10,
+            border: "1.5px solid #e2e8f0", fontSize: 14,
+            outline: "none", marginBottom: 8
+          }}
+        />
+        <div style={{ display: "flex", gap: 6 }}>
+          {[["todos","Todos"],["presente","Presentes"],["ausente","Ausentes"],["em_transito","Em trânsito"]].map(([v,l]) => (
+            <button key={v} onClick={() => setFiltro(v)} style={{
+              padding: "5px 12px", borderRadius: 99, border: "1.5px solid",
+              borderColor: filtro === v ? "#1B3D6F" : "#e2e8f0",
+              background: filtro === v ? "#1B3D6F" : "#fff",
+              color: filtro === v ? "#fff" : "#64748b",
+              fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap"
+            }}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Student list */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtrados.map(aluno => (
+          <div key={aluno.id} style={{
+            background: "#fff", borderRadius: 14, padding: "12px 14px",
+            display: "flex", alignItems: "center", gap: 12,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+            borderLeft: `4px solid ${STATUS_CONF[aluno.status]?.cor || "#e2e8f0"}`
+          }}>
+            <Avatar iniciais={aluno.foto} size={44} />
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#1e293b" }}>{aluno.nome}</p>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>Turma {aluno.turma}</span>
+                {aluno.hora && <span style={{ fontSize: 11, color: "#94a3b8" }}>· {aluno.hora}</span>}
+              </div>
+              <div style={{ marginTop: 4 }}><Badge status={aluno.status} /></div>
+            </div>
+            <button onClick={() => toggleStatus(aluno.id)} style={{
+              width: 36, height: 36, borderRadius: "50%",
+              border: "1.5px solid #e2e8f0", background: "#f8fafc",
+              cursor: "pointer", fontSize: 16, display: "flex",
+              alignItems: "center", justifyContent: "center"
+            }}>
+              {aluno.status === "presente" ? "✓" : "○"}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {showFacial && <FacialModal onClose={() => setShowFacial(false)} onConfirm={onFacialConfirm} />}
+    </div>
+  );
+}
+
+// ── NOTIFICATIONS VIEW ────────────────────────────────────────────────────
+function NotificacoesView({ notifs, setNotifs }) {
+  const naoLidas = notifs.filter(n => !n.lida).length;
+
+  const tipoConf = {
+    alerta: { bg: "#fee2e2", cor: "#dc2626", icon: "⚠️" },
+    aviso:  { bg: "#fef3c7", cor: "#d97706", icon: "🔔" },
+    info:   { bg: "#eff6ff", cor: "#2563eb", icon: "ℹ️" },
+    sucesso:{ bg: "#dcfce7", cor: "#16a34a", icon: "✅" },
+  };
+
+  return (
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#1B3D6F" }}>
+          Notificações {naoLidas > 0 && <span style={{ background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 7px", fontSize: 11 }}>{naoLidas}</span>}
+        </p>
+        {naoLidas > 0 && (
+          <button onClick={() => setNotifs(n => n.map(x => ({ ...x, lida: true })))}
+            style={{ border: "none", background: "none", color: "#2563eb", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            Marcar todas como lidas
+          </button>
+        )}
+      </div>
+
+      {notifs.map(n => {
+        const conf = tipoConf[n.tipo] || tipoConf.info;
+        return (
+          <div key={n.id} onClick={() => setNotifs(prev => prev.map(x => x.id === n.id ? { ...x, lida: true } : x))}
+            style={{
+              background: n.lida ? "#fff" : conf.bg,
+              borderRadius: 14, padding: "14px 16px",
+              display: "flex", gap: 12, alignItems: "flex-start",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+              cursor: "pointer", transition: "background 0.2s",
+              borderLeft: `4px solid ${n.lida ? "#e2e8f0" : conf.cor}`
+            }}>
+            <span style={{ fontSize: 20, marginTop: 1 }}>{conf.icon}</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: "0 0 3px", fontSize: 13, fontWeight: n.lida ? 500 : 700, color: "#1e293b" }}>{n.msg}</p>
+              <p style={{ margin: 0, fontSize: 11, color: "#94a3b8" }}>{n.hora}</p>
+            </div>
+            {!n.lida && <div style={{ width: 8, height: 8, borderRadius: "50%", background: conf.cor, marginTop: 6, flexShrink: 0 }}/>}
+          </div>
+        );
+      })}
+
+      {/* Send notification */}
+      <div style={{ background: "#fff", borderRadius: 16, padding: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
+        <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: "#1B3D6F" }}>Enviar Notificação</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {[
+            { label: "🚌 Ônibus partiu", tipo: "info" },
+            { label: "📍 Checkpoint atingido", tipo: "sucesso" },
+            { label: "⚠️ Aluno não localizado", tipo: "alerta" },
+            { label: "⏱ Atraso no trajeto", tipo: "aviso" },
+          ].map(btn => (
+            <button key={btn.label} onClick={() => {
+              const nova = {
+                id: Date.now(), tipo: btn.tipo,
+                msg: `${btn.label} · ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
+                hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+                lida: false
+              };
+              setNotifs(prev => [nova, ...prev]);
+            }} style={{
+              background: tipoConf[btn.tipo].bg, color: tipoConf[btn.tipo].cor,
+              border: "none", borderRadius: 10, padding: "10px 14px",
+              fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left"
+            }}>{btn.label}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────
+function DashboardView({ alunos }) {
+  const presentes = alunos.filter(a => a.status === "presente").length;
+  const ausentes = alunos.filter(a => a.status === "ausente").length;
+  const transito = alunos.filter(a => a.status === "em_transito").length;
+  const pct = Math.round((presentes / alunos.length) * 100);
+
+  return (
+    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+      {/* Header card */}
+      <div style={{
+        background: "linear-gradient(135deg, #1B3D6F 0%, #2563eb 100%)",
+        borderRadius: 20, padding: "20px 20px 16px", color: "#fff",
+        boxShadow: "0 8px 24px rgba(27,61,111,0.3)"
+      }}>
+        <p style={{ margin: "0 0 2px", fontSize: 11, fontWeight: 700, letterSpacing: 1.5, opacity: 0.8, textTransform: "uppercase" }}>
+          Passeio Escolar
+        </p>
+        <p style={{ margin: "0 0 12px", fontSize: 20, fontWeight: 800 }}>Parque do Ibirapuera 🌿</p>
+        <div style={{ display: "flex", gap: 12 }}>
+          <div><p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Data</p><p style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>11/06/2025</p></div>
+          <div style={{ width: 1, background: "rgba(255,255,255,0.2)" }}/>
+          <div><p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Turmas</p><p style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>6ºA, 6ºB, 7ºA, 7ºB</p></div>
+          <div style={{ width: 1, background: "rgba(255,255,255,0.2)" }}/>
+          <div><p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Ônibus</p><p style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>Em rota 🚌</p></div>
+        </div>
+      </div>
+
+      {/* Presença gauge */}
+      <div style={{ background: "#fff", borderRadius: 16, padding: 20, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#1B3D6F" }}>Presença Geral</p>
+          <p style={{ margin: 0, fontSize: 28, fontWeight: 800, color: "#1B3D6F" }}>{pct}%</p>
+        </div>
+        <div style={{ background: "#e2e8f0", borderRadius: 99, height: 10, marginBottom: 12 }}>
+          <div style={{
+            background: "linear-gradient(90deg, #22c55e, #16a34a)",
+            borderRadius: 99, height: "100%", width: `${pct}%`,
+            transition: "width 1s ease"
+          }}/>
+        </div>
+        <div style={{ display: "flex", gap: 16 }}>
+          {[
+            { val: presentes, label: "Presentes", cor: "#22c55e" },
+            { val: ausentes, label: "Ausentes", cor: "#ef4444" },
+            { val: transito, label: "Em trânsito", cor: "#f59e0b" },
+          ].map(s => (
+            <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: s.cor }}/>
+              <span style={{ fontSize: 12, color: "#64748b" }}><strong style={{ color: "#1e293b" }}>{s.val}</strong> {s.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Checkpoints */}
+      <div style={{ background: "#fff", borderRadius: 16, padding: 16, boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
+        <p style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: "#1B3D6F" }}>Checklist do Trajeto</p>
+        {[
+          { label: "Embarque na escola", ok: true, hora: "07:45" },
+          { label: "Saída confirmada (12 alunos)", ok: true, hora: "07:45" },
+          { label: "Checkpoint Av. Paulista", ok: true, hora: "08:18" },
+          { label: "Chegada ao Ibirapuera", ok: false, hora: "~08:45" },
+          { label: "Visita ao Museu de Ciências", ok: false, hora: "10:00" },
+          { label: "Retorno à escola", ok: false, hora: "16:00" },
+        ].map((item, i) => (
+          <div key={i} style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 0",
+            borderBottom: i < 5 ? "1px solid #f1f5f9" : "none"
+          }}>
+            <div style={{
+              width: 22, height: 22, borderRadius: "50%",
+              background: item.ok ? "#22c55e" : "#e2e8f0",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 11, color: item.ok ? "#fff" : "#94a3b8",
+              fontWeight: 700, flexShrink: 0
+            }}>{item.ok ? "✓" : i + 1}</div>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: 0, fontSize: 13, color: item.ok ? "#1e293b" : "#94a3b8", fontWeight: item.ok ? 600 : 400 }}>{item.label}</p>
+            </div>
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>{item.hora}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Alert */}
+      <div style={{
+        background: "#fee2e2", borderRadius: 14, padding: "12px 16px",
+        borderLeft: "4px solid #ef4444"
+      }}>
+        <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: "#dc2626" }}>⚠️ 2 Alunos Ausentes</p>
+        <p style={{ margin: 0, fontSize: 12, color: "#b91c1c" }}>
+          Mariana Costa e Rafael Souza não embarcaram. Responsáveis notificados às 08:20.
+        </p>
+      </div>
+
+      {/* Quick stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {[
+          { icon: "📍", label: "Próxima parada", val: "Ibirapuera" },
+          { icon: "⏱", label: "ETA chegada", val: "~8 min" },
+          { icon: "🌡", label: "Temperatura", val: "24°C" },
+          { icon: "🔋", label: "GPS ativo", val: "100%" },
+        ].map(s => (
+          <div key={s.label} style={{
+            background: "#fff", borderRadius: 14, padding: "14px",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.06)"
+          }}>
+            <p style={{ margin: 0, fontSize: 20 }}>{s.icon}</p>
+            <p style={{ margin: "4px 0 0", fontSize: 16, fontWeight: 800, color: "#1B3D6F" }}>{s.val}</p>
+            <p style={{ margin: 0, fontSize: 11, color: "#94a3b8" }}>{s.label}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── APP ROOT ───────────────────────────────────────────────────────────────
+export default function App() {
+  const [aba, setAba] = useState("dashboard");
+  const [alunos, setAlunos] = useState(ALUNOS_MOCK);
+  const [notifs, setNotifs] = useState(NOTIFICACOES_MOCK);
+
+  const naoLidas = notifs.filter(n => !n.lida).length;
+
+  const tabs = [
+    { id: "dashboard", icon: "🏠", label: "Início" },
+    { id: "alunos",    icon: "👥", label: "Alunos" },
+    { id: "mapa",      icon: "🗺",  label: "Mapa" },
+    { id: "notifs",    icon: "🔔",  label: "Alertas", badge: naoLidas },
+  ];
+
+  return (
+    <div style={{
+      maxWidth: 480, margin: "0 auto",
+      height: "100vh", display: "flex", flexDirection: "column",
+      background: "#f1f5f9", fontFamily: "Inter, system-ui, sans-serif",
+      position: "relative", overflow: "hidden"
+    }}>
+      {/* Top bar */}
+      <div style={{
+        background: "#1B3D6F", color: "#fff",
+        padding: "12px 16px 10px",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        flexShrink: 0, boxShadow: "0 2px 12px rgba(27,61,111,0.4)"
+      }}>
+        <div>
+          <p style={{ margin: 0, fontSize: 17, fontWeight: 800, letterSpacing: -0.3 }}>🏫 EduViagem</p>
+          <p style={{ margin: 0, fontSize: 11, opacity: 0.75 }}>Aula de Campo · Ao vivo</p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{
+            background: "#22c55e", borderRadius: 99,
+            padding: "3px 10px", fontSize: 11, fontWeight: 700,
+            display: "flex", alignItems: "center", gap: 5
+          }}>
+            <span style={{ width: 6, height: 6, background: "#fff", borderRadius: "50%", display: "inline-block" }}/>
+            GPS Ativo
+          </div>
+          <div style={{
+            width: 36, height: 36, borderRadius: "50%",
+            background: "rgba(255,255,255,0.15)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 18
+          }}>👩‍🏫</div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {aba === "dashboard" && <DashboardView alunos={alunos} />}
+        {aba === "alunos"    && <AlunosView alunos={alunos} setAlunos={setAlunos} />}
+        {aba === "mapa"      && <MapaView alunos={alunos} />}
+        {aba === "notifs"    && <NotificacoesView notifs={notifs} setNotifs={setNotifs} />}
+      </div>
+
+      {/* Bottom tab bar */}
+      <div style={{
+        background: "#fff", borderTop: "1px solid #e2e8f0",
+        display: "flex", flexShrink: 0,
+        boxShadow: "0 -4px 16px rgba(0,0,0,0.06)"
+      }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setAba(t.id)} style={{
+            flex: 1, padding: "10px 4px 8px", border: "none",
+            background: "none", cursor: "pointer",
+            display: "flex", flexDirection: "column",
+            alignItems: "center", gap: 3,
+            color: aba === t.id ? "#1B3D6F" : "#94a3b8",
+            position: "relative"
+          }}>
+            {t.badge > 0 && (
+              <span style={{
+                position: "absolute", top: 6, right: "50%", marginRight: -16,
+                background: "#ef4444", color: "#fff",
+                borderRadius: 99, fontSize: 9, fontWeight: 700,
+                padding: "1px 5px", lineHeight: 1.4
+              }}>{t.badge}</span>
+            )}
+            <span style={{ fontSize: 20 }}>{t.icon}</span>
+            <span style={{ fontSize: 10, fontWeight: aba === t.id ? 700 : 500 }}>{t.label}</span>
+            {aba === t.id && (
+              <div style={{ position: "absolute", bottom: 0, left: "20%", right: "20%", height: 3, background: "#1B3D6F", borderRadius: "3px 3px 0 0" }}/>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
